@@ -1,0 +1,117 @@
+defmodule ServiceShellWeb.LocalProxy do
+  import Plug.Conn
+
+  def init(opts), do: opts
+
+  def call(conn, _opts) do
+    # We expect a path like /proxy/:port/rest/of/path
+    case conn.path_info do
+      ["proxy", port_str | rest] ->
+        # target_url = "http://localhost:#{port_str}/#{Enum.join(rest, "/")}"
+        # target_url = "http://127.0.0.1:#{port_str}/#{Enum.join(rest, "/")}"
+        target_url = "http://172.16.250.248:#{port_str}/#{Enum.join(rest, "/")}"
+        proxy_request(conn, target_url)
+
+      _ ->
+        conn
+    end
+  end
+
+  defp proxy_request(conn, url) do
+    # Log for debugging
+    IO.puts("Proxying to: #{url}")
+
+    case Req.get(url,
+           params: conn.query_params,
+           # Convert list to map for Req
+           headers: Enum.into(conn.req_headers, %{}),
+           decode_body: false,
+           retry: false
+         ) do
+      {:ok, response} ->
+        # 1. Define headers to drop (Security + Connection management)
+        forbidden = [
+          "content-security-policy",
+          "x-frame-options",
+          "frame-options",
+          "transfer-encoding",
+          "connection",
+          "keep-alive"
+        ]
+
+        # 2. Convert Map headers back to a List of Tuples and Filter
+        clean_headers =
+          response.headers
+          |> Enum.reject(fn {k, _v} -> String.downcase(k) in forbidden end)
+          |> Enum.map(fn {k, v} -> {String.downcase(k), List.wrap(v) |> List.first()} end)
+
+        conn
+        |> merge_resp_headers(clean_headers)
+        |> send_resp(response.status, response.body)
+        |> halt()
+
+      {:error, exception} ->
+        conn
+        |> send_resp(502, "Proxy Error: #{inspect(exception)}")
+        |> halt()
+    end
+  end
+end
+
+defp proxy_request(conn, url) do
+  # Determine the 'Base' for this specific port
+  uri = URI.parse(url)
+  # e.g., /proxy/9000
+  proxy_base = "/proxy/#{uri.port}"
+  # e.g., http://localhost:9000
+  original_base = "#{uri.scheme}://#{uri.host}:#{uri.port}"
+
+  case Req.get(url,
+         headers: Enum.into(conn.req_headers, %{}),
+         decode_body: false
+       ) do
+    {:ok, %{status: status, headers: headers, body: body}} ->
+      content_type = get_header(headers, "content-type")
+
+      # Only rewrite text-based files
+      processed_body =
+        if should_rewrite?(content_type) do
+          rewrite_body(body, original_base, proxy_base)
+        else
+          body
+        end
+
+      # Strip security and transfer headers
+      forbidden = ["content-security-policy", "x-frame-options", "transfer-encoding"]
+
+      clean_headers =
+        headers
+        |> Enum.reject(fn {k, _} -> String.downcase(k) in forbidden end)
+        |> Enum.map(fn {k, v} -> {String.downcase(k), List.wrap(v) |> List.first()} end)
+
+      conn
+      |> merge_resp_headers(clean_headers)
+      |> send_resp(status, processed_body)
+      |> halt()
+
+    {:error, _} ->
+      send_resp(conn, 502, "Satellite Offline")
+  end
+end
+
+# Helper to identify text/assets
+defp should_rewrite?(nil), do: false
+defp should_rewrite?(ct), do: String.contains?(ct, ["html", "javascript", "css", "json"])
+
+# The Search & Replace logic
+defp rewrite_body(body, original, proxy) do
+  body
+  |> String.replace(original, proxy)
+  # Also handle absolute paths that start with / (e.g. href="/system")
+  # We look for strings starting with "/" but not followed by "proxy"
+  |> String.replace(~r/(href|src)="\/((?!proxy).*?)"/, "\\1=\"#{proxy}/\\2\"")
+end
+
+defp get_header(headers, key) do
+  headers |> Map.get(key, []) |> List.wrap() |> List.first()
+end

@@ -1,0 +1,123 @@
+defmodule ServiceShellWeb.ShellLive do
+  use ServiceShellWeb, :live_view
+
+  def render(assigns) do
+    ~H"""
+    <div class="flex h-screen w-full bg-base-300">
+      <ul class="menu bg-base-200 w-64 h-full p-4 border-r border-base-100 flex-shrink-0">
+        <li class="menu-title text-primary uppercase tracking-widest text-xs font-bold mb-4">
+          Services
+        </li>
+
+        <%!-- <li>
+          <button
+            phx-click="switch"
+            phx-value-url="http://localhost:8080"
+            phx-value-name="App A"
+            class={if @active_tab == "App A", do: "active"}
+          >
+            <.icon name="hero-cpu-chip" class="h-5 w-5" /> App A (8080)
+          </button>
+        </li> --%>
+
+        <%!-- <li>
+          <button
+            phx-click="switch"
+            phx-value-url="http://localhost:9000"
+            phx-value-name="App B"
+            class={if @active_tab == "App B", do: "active"}
+          >
+            <.icon name="hero-globe-alt" class="h-5 w-5" /> App B (9000)
+          </button>
+        </li> --%>
+        <li>
+          <button
+            phx-click="switch"
+            phx-value-port="9000"
+            phx-value-name="YT App"
+            class={if @active_tab == "YT App", do: "active"}
+          >
+            YT App (1)
+          </button>
+        </li>
+
+        <li>
+          <button
+            phx-click="switch"
+            phx-value-port="9000"
+            phx-value-name="YT App"
+            class={if @active_tab == "YT App", do: "active"}
+          >
+            YT App (2)
+          </button>
+        </li>
+        <div class="divider"></div>
+        <li class="menu-title text-secondary uppercase tracking-widest text-xs font-bold mb-2">
+          Tools
+        </li>
+
+        <li class="mt-2">
+          <button
+            phx-click="toggle_record"
+            class={"btn btn-block #{if @is_recording, do: "btn-error animate-pulse", else: "btn-outline btn-success"}"}
+          >
+            <%= if @is_recording do %>
+              <.icon name="hero-stop-circle" class="h-5 w-5" /> Stop Recording
+            <% else %>
+              <.icon name="hero-video-camera" class="h-5 w-5" /> Start Record
+            <% end %>
+          </button>
+        </li>
+      </ul>
+
+      <main class="flex-1 h-full bg-white">
+        <iframe
+          id="service-viewport"
+          src={@current_url}
+          class="w-full h-full border-none"
+          allow="cross-origin-isolated"
+        >
+        </iframe>
+      </main>
+
+      <button phx-click="toggle_record" class="btn btn-block relative">
+        <%= if @is_recording do %>
+          <span class="badge badge-error badge-xs animate-ping absolute top-2 right-2"></span>
+          Stop Recording
+        <% else %>
+          Start Recording
+        <% end %>
+      </button>
+    </div>
+    """
+  end
+
+  # def handle_event("switch", %{"url" => url, "name" => name}, socket) do
+  #   {:noreply, assign(socket, current_url: url, active_tab: name)}
+  # end
+
+  def mount(_params, _session, socket) do
+    # Check status on load in case the app restarted
+    %{status: status} = ServiceShell.RecordingManager.status()
+
+    {:ok,
+     assign(socket,
+       is_recording: status == :recording,
+       current_url: "/proxy/9000/"
+     )}
+  end
+
+  def handle_event("toggle_record", _params, socket) do
+    if socket.assigns.is_recording do
+      ServiceShell.RecordingManager.stop_recording()
+      {:noreply, assign(socket, is_recording: false)}
+    else
+      filename = "capture_#{System.system_time(:second)}.mp4"
+
+      case ServiceShell.RecordingManager.start_recording(filename) do
+        :ok -> {:noreply, assign(socket, is_recording: true)}
+        {:error, _} -> {:noreply, socket}
+      end
+    end
+  end
+end
